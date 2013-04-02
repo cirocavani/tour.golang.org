@@ -1,0 +1,6 @@
+http://tour.golang.org/
+
+An interactive introduction to Go in three sections. The first section covers basic syntax and data structures; the second discusses methods and interfaces; and the third introduces Go's concurrency primitives. Each section concludes with a few exercises so you can practice what you've learned.
+
+Exercise: Loops and Functions
+http://tour.golang.org/#23
