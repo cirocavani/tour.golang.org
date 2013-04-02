@@ -4,3 +4,6 @@ An interactive introduction to Go in three sections. The first section covers ba
 
 Exercise: Loops and Functions
 http://tour.golang.org/#23
+
+Exercise: Slices
+http://tour.golang.org/#35
