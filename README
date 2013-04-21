@@ -16,3 +16,6 @@ http://tour.golang.org/#43
 
 Advanced Exercise: Complex cube roots
 http://tour.golang.org/#47
+
+Exercise: Errors
+http://tour.golang.org/#55
