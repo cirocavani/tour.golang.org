@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"sync"
 	"time"
 )
 
@@ -12,67 +11,73 @@ type Fetcher interface {
 	Fetch(url string) (body string, urls []string, err error)
 }
 
-type trace struct {
-	sync.Mutex
-	urls map[string]bool
-}
-
-func newTrace() *trace {
-	return &trace{urls: make(map[string]bool)}
-}
-
-func (t *trace) has(url string) bool {
-	t.Lock()
-	defer t.Unlock()
-	_, ok := t.urls[url]
-	return ok
-}
-
-func (t *trace) add(url string) {
-	t.Lock()
-	defer t.Unlock()
-	t.urls[url] = true
-}
-
 type data struct {
-	url   string
-	depth int
+	url    string
+	depth  int
+	result []string
 }
 
-func work(i int, t *trace, dataWg *sync.WaitGroup, dataCh chan data, quitCh chan bool) {
+func broker(workToDoCh, workDoneCh chan data, doneCh chan bool) {
+	workDoing := make(map[string]bool)
+	workDone := make(map[string]bool)
+
+	doing := func(url string) bool {
+		_, ok := workDoing[url]
+		return ok
+	}
+
+	done := func(url string) bool {
+		_, ok := workDone[url]
+		return ok
+	}
+
+	old := func(url string) bool {
+		return done(url) || doing(url)
+	}
+
+	for {
+		v := <-workDoneCh
+		workDone[v.url] = true
+		delete(workDoing, v.url)
+		if len(v.result) > 0 && v.depth > 0 {
+			for _, url := range v.result {
+				if old(url) {
+					fmt.Println("Ignored:", url)
+					continue
+				}
+				workDoing[url] = true
+				workToDoCh <- data{url: url, depth: v.depth - 1}
+			}
+		}
+		if len(workDoing) == 0 {
+			break
+		}
+	}
+
+	doneCh <- true
+}
+
+func worker(i int, workToDoCh, workDoneCh chan data, quitCh chan bool) {
 	var v data
 	for {
 		select {
-		case v = <-dataCh:
+		case v = <-workToDoCh:
 			fmt.Println(i, "Work:", v.url)
 		case <-quitCh:
 			fmt.Println(i, "Quitting.")
 			return
 		}
 
-		if t.has(v.url) || v.depth <= 0 {
-			fmt.Println(i, "Ignored:", v.url)
-			dataWg.Done()
-			continue
-		}
-
-		t.add(v.url)
-
 		body, urls, err := fetcher.Fetch(v.url)
 		if err != nil {
 			fmt.Println(i, "Error:", err)
-			dataWg.Done()
+			workDoneCh <- v
 			continue
 		}
 
 		fmt.Printf("%v Found: %s %q\n", i, v.url, body)
 
-		dataWg.Add(len(urls))
-
-		for _, u := range urls {
-			dataCh <- data{u, v.depth - 1}
-		}
-		dataWg.Done()
+		workDoneCh <- data{v.url, v.depth, urls}
 	}
 }
 
@@ -83,24 +88,22 @@ func Crawl(url string, depth int, fetcher Fetcher) {
 	// Don't fetch the same URL twice.
 
 	n := 3
-	t := newTrace()
-	dataWg := &sync.WaitGroup{}
-	dataCh := make(chan data, 10)
-	quitCh := make([]chan bool, n)
+	workToDoCh := make(chan data, 10)
+	workDoneCh := make(chan data, 10)
+	doneCh := make(chan bool, 1)
+	quitCh := make(chan bool, 1)
 
-	dataWg.Add(1)
-	dataCh <- data{url, depth}
+	go broker(workToDoCh, workDoneCh, doneCh)
 
 	for i := 0; i < n; i++ {
-		quit := make(chan bool, 1)
-		quitCh[i] = quit
-		go work(i+1, t, dataWg, dataCh, quit)
+		go worker(i+1, workToDoCh, workDoneCh, quitCh)
 	}
 
-	dataWg.Wait()
+	workToDoCh <- data{url: url, depth: depth}
 
-	for _, quit := range quitCh {
-		quit <- true
+	<-doneCh
+	for i := 0; i < n; i++ {
+		quitCh <- true
 	}
 	time.Sleep(10 * time.Millisecond)
 }
